@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+@import './base.css';
+
+body {
+  min-height: 100vh;
+}
+
+#root {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+/* WaveProgressBar's two wave layers. Kept in CSS rather than inlined in the
+   component so they can follow the theme — the SVG paths are drawn
+   imperatively and can't carry Tailwind's `dark:` variants themselves.
+
+   The main wave takes the bar's own colour straight from Tailwind's palette,
+   so it stays in lockstep with the fill's `fill-sky-*` classes instead of
+   drifting out of sync with a hand-copied hex. The companion wave is a
+   deeper blue at ~80% saturation: vivid, but clearly the darker of the two. */
+.wave-progress-bar {
+  --wave-strong: var(--color-sky-500);
+  --wave-soft: hsl(205 78% 42%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .wave-progress-bar {
+    --wave-strong: var(--color-sky-400);
+    --wave-soft: hsl(205 82% 50%);
+  }
+}
