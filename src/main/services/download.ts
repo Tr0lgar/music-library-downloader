@@ -13,9 +13,13 @@ import { getBrowserCandidates } from '../utils/defaultBrowser'
 // yt-dlp/ffmpeg --audio-quality: 0 (best) - 10 (worst) VBR, or a bitrate like "192K".
 const AUDIO_QUALITY = '192K'
 
-// Downloads run concurrently up to this limit — high enough to feel parallel,
-// low enough to avoid tripping YouTube's anti-bot throttling further.
-const MAX_CONCURRENT_DOWNLOADS = 3
+// Search and stream download are throttled separately rather than under one
+// shared limit: they're different network operations against YouTube, and
+// bundling them meant a slot stayed occupied for a track's entire download +
+// tagging just to keep the search step in check — blocking the next track's
+// search for no reason, since tagging/cover art don't touch YouTube at all.
+const MAX_CONCURRENT_SEARCHES = 4
+const MAX_CONCURRENT_STREAM_DOWNLOADS = 5
 
 function getDownloadRoot(): string {
   return join(app.getPath('music'), 'Music Library Downloader')
@@ -77,7 +81,8 @@ class ConcurrencyLimiter {
   }
 }
 
-const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_DOWNLOADS)
+const searchLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_SEARCHES)
+const downloadLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_STREAM_DOWNLOADS)
 
 // Cover Art Archive — same source as the discography grid. Its image
 // endpoint (unlike the rest of archive.org) has been intermittently
@@ -201,50 +206,58 @@ export async function downloadTrack(
   // actually attempted rather than just one guess.
   const browserCandidates = getBrowserCandidates()
 
-  await limiter.run(async () => {
-    try {
+  try {
+    // Status flips to 'searching' only once the limiter actually grants a
+    // slot — emitting it earlier would show every queued track as
+    // "searching" while most of them are really just waiting in line.
+    const candidates = await searchLimiter.run(() => {
       emit('searching', 0)
-      const candidates = await searchYoutube(request.artist, request.title)
-      if (candidates.length === 0) {
-        throw new Error('No YouTube result found for this track.')
-      }
+      return searchYoutube(request.artist, request.title)
+    })
+    if (candidates.length === 0) {
+      throw new Error('No YouTube result found for this track.')
+    }
 
-      const match = findBestMatch(
-        { title: request.title, artist: request.artist, durationMs: request.durationMs },
-        candidates
-      )
+    const match = findBestMatch(
+      { title: request.title, artist: request.artist, durationMs: request.durationMs },
+      candidates
+    )
 
-      const destinationDir = join(
-        getDownloadRoot(),
-        sanitizeFileName(request.artist),
-        sanitizeFileName(request.album)
-      )
-      mkdirSync(destinationDir, { recursive: true })
+    const destinationDir = join(
+      getDownloadRoot(),
+      sanitizeFileName(request.artist),
+      sanitizeFileName(request.album)
+    )
+    mkdirSync(destinationDir, { recursive: true })
 
-      // No track number prefix — it's already in the TRCK ID3 tag, and
-      // duplicating it in the filename was redundant.
-      const fileBaseName = sanitizeFileName(request.title)
-      const outputTemplate = join(destinationDir, `${fileBaseName}.%(ext)s`)
+    // No track number prefix — it's already in the TRCK ID3 tag, and
+    // duplicating it in the filename was redundant.
+    const fileBaseName = sanitizeFileName(request.title)
+    const outputTemplate = join(destinationDir, `${fileBaseName}.%(ext)s`)
 
-      emit('downloading', 0)
+    // `match.candidates` is already sorted best-first (and includes the
+    // best pick at index 0 either way). A given YouTube video can fail for
+    // reasons unrelated to how good a match it is — geo/age restriction,
+    // a transient 403, etc. — so fall through to the next-best candidate
+    // instead of giving up on the whole track.
+    //
+    // Nested inside that: we don't know which browser (if any) has a
+    // valid YouTube login, so the outer loop tries each supported browser
+    // in turn against every candidate, and only moves on to the next
+    // browser if the failure actually looked auth-related — a network
+    // blip or bad format isn't going to be fixed by switching browsers.
+    let filePath: string | undefined
+    let lastError: unknown
 
-      // `match.candidates` is already sorted best-first (and includes the
-      // best pick at index 0 either way). A given YouTube video can fail for
-      // reasons unrelated to how good a match it is — geo/age restriction,
-      // a transient 403, etc. — so fall through to the next-best candidate
-      // instead of giving up on the whole track.
-      //
-      // Nested inside that: we don't know which browser (if any) has a
-      // valid YouTube login, so the outer loop tries each supported browser
-      // in turn against every candidate, and only moves on to the next
-      // browser if the failure actually looked auth-related — a network
-      // blip or bad format isn't going to be fixed by switching browsers.
-      let filePath: string | undefined
-      let lastError: unknown
-
-      browserLoop: for (const browser of browserCandidates) {
-        for (const candidate of match.candidates) {
-          try {
+    browserLoop: for (const browser of browserCandidates) {
+      for (const candidate of match.candidates) {
+        try {
+          // Back to 'queued' for however long this attempt waits on a
+          // download slot — a failed candidate/browser combo shouldn't leave
+          // the track showing "downloading" while it's actually idle.
+          emit('queued', 0)
+          filePath = await downloadLimiter.run(async () => {
+            emit('downloading', 0)
             const download = new Download(candidate.url, { ffmpegPath: ffmpegPath ?? undefined })
               .setOutputTemplate(outputTemplate)
               .extractAudio('mp3')
@@ -256,32 +269,31 @@ export async function downloadTrack(
             })
 
             const result = await download.run()
-            filePath = result.filePaths[0]
-            if (filePath) break browserLoop
-          } catch (error) {
-            lastError = error
-            console.warn(
-              `[download] candidate failed (browser=${browser}): ${candidate.url}`,
-              error
-            )
-          }
+            return result.filePaths[0]
+          })
+          if (filePath) break browserLoop
+        } catch (error) {
+          lastError = error
+          console.warn(`[download] candidate failed (browser=${browser}): ${candidate.url}`, error)
         }
-
-        if (!isAuthFailure(lastError)) break
       }
 
-      if (!filePath) {
-        throw lastError ?? new Error('All candidate sources failed.')
-      }
-
-      emit('tagging', 100)
-      const cover = await fetchCoverArt(request.releaseGroupId)
-      tagFile(filePath, request, cover)
-
-      emit('done', 100)
-    } catch (error) {
-      const friendly = toFriendlyError(error, browserCandidates)
-      emit('error', 0, friendly.message)
+      if (!isAuthFailure(lastError)) break
     }
-  })
+
+    if (!filePath) {
+      throw lastError ?? new Error('All candidate sources failed.')
+    }
+
+    // Cover art and tagging are local/cached work with no YouTube traffic,
+    // so they run unthrottled once the download slot above has freed up.
+    emit('tagging', 100)
+    const cover = await fetchCoverArt(request.releaseGroupId)
+    tagFile(filePath, request, cover)
+
+    emit('done', 100)
+  } catch (error) {
+    const friendly = toFriendlyError(error, browserCandidates)
+    emit('error', 0, friendly.message)
+  }
 }
