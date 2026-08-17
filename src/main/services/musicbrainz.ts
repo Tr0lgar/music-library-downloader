@@ -39,6 +39,11 @@ interface MusicBrainzArtistCredit {
   name: string
 }
 
+interface MusicBrainzGenre {
+  name: string
+  count: number
+}
+
 interface MusicBrainzArtist {
   id: string
   name: string
@@ -58,6 +63,7 @@ interface MusicBrainzReleaseGroup {
   'primary-type'?: string
   'first-release-date'?: string
   'artist-credit'?: MusicBrainzArtistCredit[]
+  genres?: MusicBrainzGenre[]
 }
 
 interface MusicBrainzRecording {
@@ -73,6 +79,7 @@ interface MusicBrainzRecording {
 interface MusicBrainzArtistLookup extends MusicBrainzArtist {
   relations?: MusicBrainzUrlRelation[]
   'release-groups'?: MusicBrainzReleaseGroup[]
+  genres?: MusicBrainzGenre[]
 }
 
 export interface ArtistWithReleaseGroups {
@@ -120,6 +127,18 @@ async function mbRequest<T>(path: string, params: Record<string, string>): Promi
 
 function joinArtistCredit(credits?: MusicBrainzArtistCredit[]): string {
   return credits && credits.length > 0 ? credits.map((c) => c.name).join(', ') : 'Unknown artist'
+}
+
+const MAX_GENRES = 3
+
+// MusicBrainz genres are community-voted tags with a vote count — keep only
+// the top few so a niche one-vote tag doesn't crowd out the ones that
+// actually describe the album.
+function topGenres(genres?: MusicBrainzGenre[]): string[] {
+  return [...(genres ?? [])]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, MAX_GENRES)
+    .map((genre) => genre.name)
 }
 
 // Used by the search bar — artist / album / track.
@@ -183,11 +202,12 @@ const DISCOGRAPHY_PRIMARY_TYPES = new Set(['Album', 'EP'])
 
 export async function getArtistWithReleaseGroups(id: string): Promise<ArtistWithReleaseGroups> {
   const data = await mbRequest<MusicBrainzArtistLookup>(`artist/${id}`, {
-    inc: 'release-groups+url-rels'
+    inc: 'release-groups+url-rels+genres'
   })
 
   const wikidataRelation = data.relations?.find((relation) => relation.type === 'wikidata')
   const wikidataId = wikidataRelation?.url.resource.split('/').pop()
+  const artistGenres = topGenres(data.genres)
 
   const releaseGroups = (data['release-groups'] ?? [])
     .filter((releaseGroup) => DISCOGRAPHY_PRIMARY_TYPES.has(releaseGroup['primary-type'] ?? ''))
@@ -198,7 +218,11 @@ export async function getArtistWithReleaseGroups(id: string): Promise<ArtistWith
       // artist we just looked up), so use its name directly.
       artist: data.name,
       primaryType: releaseGroup['primary-type'],
-      firstReleaseDate: releaseGroup['first-release-date']
+      firstReleaseDate: releaseGroup['first-release-date'],
+      // Not every release-group has its own genre votes (early demos, live
+      // singles, ...) — fall back to the artist's genres rather than
+      // shipping an untagged file.
+      genres: releaseGroup.genres?.length ? topGenres(releaseGroup.genres) : artistGenres
     }))
     .sort((a, b) => (a.firstReleaseDate ?? '9999').localeCompare(b.firstReleaseDate ?? '9999'))
 

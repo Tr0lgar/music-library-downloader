@@ -108,6 +108,7 @@ function tagFile(filePath: string, request: DownloadRequest, cover?: ArrayBuffer
   writer.setFrame('TALB', request.album)
   writer.setFrame('TRCK', String(request.trackNumber))
   if (request.year) writer.setFrame('TYER', Number(request.year))
+  if (request.genres?.length) writer.setFrame('TCON', request.genres)
   if (cover) {
     writer.setFrame('APIC', {
       // ImageType.CoverFront from browser-id3-writer — inlined as a literal

@@ -16,7 +16,8 @@ const downloadRequestSchema = z.object({
   releaseGroupId: mbidSchema,
   trackNumber: z.number().int().positive(),
   year: z.string().max(20).optional(),
-  durationMs: z.number().positive().optional()
+  durationMs: z.number().positive().optional(),
+  genres: z.array(z.string().max(100)).max(10).optional()
 })
 
 export const downloadStartSchema = z.array(downloadRequestSchema).min(1).max(200)

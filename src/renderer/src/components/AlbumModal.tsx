@@ -43,7 +43,8 @@ function buildDownloadRequests(album: AlbumResult, tracks: AlbumTrack[]): Downlo
     releaseGroupId: album.id,
     trackNumber: track.position,
     year,
-    durationMs: track.length
+    durationMs: track.length,
+    genres: album.genres
   }))
 }
 

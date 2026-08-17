@@ -14,6 +14,7 @@ export interface AlbumResult {
   artist: string
   primaryType?: string
   firstReleaseDate?: string
+  genres?: string[]
 }
 
 export interface TrackResult {
@@ -70,6 +71,7 @@ export interface DownloadRequest {
   trackNumber: number
   year?: string
   durationMs?: number
+  genres?: string[]
 }
 
 export type DownloadStatus = 'queued' | 'searching' | 'downloading' | 'tagging' | 'done' | 'error'
