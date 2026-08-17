@@ -79,15 +79,67 @@ class ConcurrencyLimiter {
 
 const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_DOWNLOADS)
 
-// Cover Art Archive — same source as the discography grid.
+// Cover Art Archive — same source as the discography grid. Its image
+// endpoint (unlike the rest of archive.org) has been intermittently
+// returning 500s — observed ~40% failure rate on otherwise identical
+// requests — so a single attempt isn't reliable enough on its own.
+const COVER_ART_ATTEMPTS = 3
+const COVER_ART_RETRY_DELAY_MS = 800
+
+const COVER_NOT_FOUND = Symbol('cover-not-found')
+
+async function downloadCoverArt(
+  releaseGroupId: string
+): Promise<ArrayBuffer | typeof COVER_NOT_FOUND> {
+  const url = `https://coverartarchive.org/release-group/${releaseGroupId}/front-500`
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= COVER_ART_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url)
+      // A 404 means this release-group genuinely has no cover art on file —
+      // retrying won't change that, unlike a 5xx or a network hiccup.
+      if (response.status === 404) return COVER_NOT_FOUND
+      if (response.ok) return await response.arrayBuffer()
+      lastError = new Error(`Cover Art Archive responded ${response.status}`)
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < COVER_ART_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, COVER_ART_RETRY_DELAY_MS * attempt))
+    }
+  }
+
+  throw lastError ?? new Error('Cover Art Archive request failed')
+}
+
+// Every track on an album shares the same cover, so fetch it once per
+// release-group and let every track in the batch reuse it — this both cuts
+// the request count and, since the cache holds the in-flight promise itself,
+// coalesces concurrent tracks of the same album onto a single request
+// instead of each racing the flaky endpoint independently.
+//
+// A confirmed "no art" (404) result is cached indefinitely — that's stable
+// MusicBrainz data. A transient failure is evicted after it settles instead,
+// so it doesn't permanently deny a cover to an album that just happened to
+// hit a bad request; a later call (a retry, or the next batch) gets a fresh
+// attempt rather than replaying a stale failure.
+const coverCache = new Map<string, Promise<ArrayBuffer | typeof COVER_NOT_FOUND>>()
+
 async function fetchCoverArt(releaseGroupId: string): Promise<ArrayBuffer | undefined> {
+  let pending = coverCache.get(releaseGroupId)
+  if (!pending) {
+    pending = downloadCoverArt(releaseGroupId)
+    coverCache.set(releaseGroupId, pending)
+  }
+
   try {
-    const response = await fetch(
-      `https://coverartarchive.org/release-group/${releaseGroupId}/front-500`
-    )
-    if (!response.ok) return undefined
-    return await response.arrayBuffer()
-  } catch {
+    const result = await pending
+    return result === COVER_NOT_FOUND ? undefined : result
+  } catch (error) {
+    coverCache.delete(releaseGroupId)
+    console.warn(`[cover] giving up on release-group ${releaseGroupId}:`, error)
     return undefined
   }
 }
