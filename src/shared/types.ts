@@ -66,6 +66,7 @@ export interface DownloadRequest {
   id: string
   title: string
   artist: string
+  albumArtist: string
   album: string
   releaseGroupId: string
   trackNumber: number

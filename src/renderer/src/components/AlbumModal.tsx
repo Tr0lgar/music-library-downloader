@@ -38,7 +38,12 @@ function buildDownloadRequests(album: AlbumResult, tracks: AlbumTrack[]): Downlo
   return tracks.map((track) => ({
     id: track.id,
     title: track.title,
+    // Per-track artist-credit (can differ from the album's, e.g. a feature)
+    // — kept for the ID3 tag, but NOT for the destination folder below,
+    // otherwise a single collab track would land in its own separate
+    // "Artist A, Artist B" folder instead of alongside the rest of the album.
     artist: track.artist,
+    albumArtist: album.artist,
     album: album.title,
     releaseGroupId: album.id,
     trackNumber: track.position,

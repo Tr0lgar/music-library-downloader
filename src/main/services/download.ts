@@ -223,9 +223,12 @@ export async function downloadTrack(
       candidates
     )
 
+    // Filed under the album's artist, not this track's own artist-credit —
+    // otherwise a collab/feature track would land in its own separate
+    // "Artist A, Artist B" folder instead of alongside the rest of the album.
     const destinationDir = join(
       getDownloadRoot(),
-      sanitizeFileName(request.artist),
+      sanitizeFileName(request.albumArtist),
       sanitizeFileName(request.album)
     )
     mkdirSync(destinationDir, { recursive: true })

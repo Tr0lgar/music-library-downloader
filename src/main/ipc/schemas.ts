@@ -12,6 +12,7 @@ const downloadRequestSchema = z.object({
   id: mbidSchema,
   title: z.string().trim().min(1).max(300),
   artist: z.string().trim().min(1).max(300),
+  albumArtist: z.string().trim().min(1).max(300),
   album: z.string().trim().min(1).max(300),
   releaseGroupId: mbidSchema,
   trackNumber: z.number().int().positive(),
