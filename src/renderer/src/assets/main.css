@@ -31,3 +31,13 @@ body {
     --wave-soft: hsl(205 82% 50%);
   }
 }
+
+/* Morphs the toggle button's shape between idle/active/error — only works
+   because all three paths are built with the same point count and command
+   structure (see DownloadsToggleButton.tsx). Transitioning the `d` CSS
+   property (not the SVG attribute) is what Chromium actually animates. */
+.toggle-shape {
+  transition:
+    d 500ms ease-in-out,
+    fill 500ms ease-in-out;
+}
