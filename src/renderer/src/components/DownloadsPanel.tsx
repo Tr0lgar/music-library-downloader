@@ -5,8 +5,9 @@ import {
   XIcon,
   type XIconHandle
 } from '@animateicons/react/lucide'
-import type { DownloadProgress, DownloadStatus } from '@shared/types'
+import type { DownloadProgress } from '@shared/types'
 import { useDownloadStore } from '../stores/downloadStore'
+import DownloadStatusSteps from './DownloadStatusSteps'
 import RetryIcon from './RetryIcon'
 import WaveProgressBar from './WaveProgressBar'
 import DownloadsToggleShape, { type ToggleButtonState } from './DownloadsToggleShape'
@@ -14,24 +15,6 @@ import DownloadsToggleShape, { type ToggleButtonState } from './DownloadsToggleS
 interface DownloadsPanelProps {
   state: ToggleButtonState
   count: number
-}
-
-const STATUS_LABELS: Record<DownloadStatus, string> = {
-  queued: 'Queued',
-  searching: 'Searching…',
-  downloading: 'Downloading…',
-  tagging: 'Tagging…',
-  done: '✓ FINISH',
-  error: '✗ ERROR'
-}
-
-const STATUS_TEXT_CLASS: Record<DownloadStatus, string> = {
-  queued: 'text-neutral-500',
-  searching: 'text-blue-600 dark:text-blue-400',
-  downloading: 'text-blue-600 dark:text-blue-400',
-  tagging: 'text-blue-600 dark:text-blue-400',
-  done: 'text-green-600 dark:text-green-400',
-  error: 'text-red-600 dark:text-red-400'
 }
 
 interface DownloadItemProps {
@@ -61,13 +44,11 @@ function DownloadItem({ download, onRetry }: DownloadItemProps): React.JSX.Eleme
         </span>
       </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <p className={`text-xs font-medium ${STATUS_TEXT_CLASS[download.status]}`}>
-          {download.error
-            ? `${STATUS_LABELS[download.status]} — ${download.error}`
-            : STATUS_LABELS[download.status]}
-        </p>
-        {download.status === 'error' && (
+      {download.status === 'error' ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-red-600 dark:text-red-400">
+            ✗ ERROR — {download.error}
+          </p>
           <button
             type="button"
             onClick={() => onRetry(download.id)}
@@ -76,8 +57,10 @@ function DownloadItem({ download, onRetry }: DownloadItemProps): React.JSX.Eleme
           >
             <RetryIcon className="h-3.5 w-3.5" />
           </button>
-        )}
-      </div>
+        </div>
+      ) : (
+        <DownloadStatusSteps status={download.status} />
+      )}
     </div>
   )
 }
