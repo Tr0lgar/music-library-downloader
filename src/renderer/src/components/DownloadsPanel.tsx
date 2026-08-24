@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  DownloadIcon,
+  type DownloadIconHandle,
+  XIcon,
+  type XIconHandle
+} from '@animateicons/react/lucide'
 import type { DownloadProgress, DownloadStatus } from '@shared/types'
 import { useDownloadStore } from '../stores/downloadStore'
-import CloseIcon from './CloseIcon'
-import DownloadIcon from './DownloadIcon'
 import RetryIcon from './RetryIcon'
 import WaveProgressBar from './WaveProgressBar'
 import DownloadsToggleShape, { type ToggleButtonState } from './DownloadsToggleShape'
@@ -78,6 +82,13 @@ function DownloadItem({ download, onRetry }: DownloadItemProps): React.JSX.Eleme
   )
 }
 
+// Must match the `delay-500` on the expanded-content layer below: the close
+// icon's own draw-in flourish is timed to start right as that layer becomes
+// visible, not the instant the button is pressed — playing it while the
+// panel is still mid-resize (or while the icon itself is still invisible)
+// would read as janky rather than smooth.
+const CLOSE_ICON_REVEAL_DELAY_MS = 500
+
 // Floating toggle button and downloads sidebar, unified into a single
 // element: opening doesn't slide a separate panel in from the screen edge,
 // it grows the button itself out into the sidebar (and shrinks it back on
@@ -87,6 +98,20 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
   const [isOpen, setOpen] = useState(false)
   const downloads = useDownloadStore((s) => s.downloads)
   const requests = useDownloadStore((s) => s.requests)
+  const downloadIconRef = useRef<DownloadIconHandle>(null)
+  const closeIconRef = useRef<XIconHandle>(null)
+
+  // Timed rather than fired straight from the open click: the icon and its
+  // library-provided animation don't know about the panel's own resize
+  // timeline, so this effect is what keeps the two in sync.
+  useEffect(() => {
+    if (!isOpen) return
+    const timer = setTimeout(
+      () => closeIconRef.current?.startAnimation(),
+      CLOSE_ICON_REVEAL_DELAY_MS
+    )
+    return () => clearTimeout(timer)
+  }, [isOpen])
 
   const handleRetry = (id: string): void => {
     const request = requests[id]
@@ -118,6 +143,11 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
                 }
               }
         }
+        // Triggered here (the whole button) rather than relying on the
+        // icon's own built-in hover, so it plays when the cursor is
+        // anywhere over the button — not just over the icon's small glyph.
+        onMouseEnter={() => downloadIconRef.current?.startAnimation()}
+        onMouseLeave={() => downloadIconRef.current?.stopAnimation()}
         data-open={isOpen}
         className={`downloads-panel fixed top-4 right-4 z-40 flex flex-col rounded-[28px] shadow-md ${
           isOpen
@@ -147,7 +177,9 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
               over `@layer`-wrapped rules). Flexbox alignment doesn't go
               through margin at all, so it isn't affected by that. */}
           <DownloadIcon
-            className={`relative z-10 h-5 w-5 transition-colors duration-500 ${state === 'error' ? 'text-red-700' : 'text-black'}`}
+            ref={downloadIconRef}
+            size={20}
+            className={`relative z-10 transition-colors duration-500 ${state === 'error' ? 'text-red-700' : 'text-black'}`}
           />
 
           {count > 0 && (
@@ -179,11 +211,18 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
           </div>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              // Played here rather than waited on: the panel starts
+              // shrinking almost immediately (see the timing note in
+              // main.css), so there's no later moment left to time this
+              // against the way there is on open.
+              closeIconRef.current?.startAnimation()
+              setOpen(false)
+            }}
             aria-label="Close downloads panel"
             className="absolute top-0 right-0 flex h-14 w-14 items-center justify-center text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
           >
-            <CloseIcon className="h-5 w-5" />
+            <XIcon ref={closeIconRef} size={20} />
           </button>
 
           <div className="flex-1 overflow-y-auto">
