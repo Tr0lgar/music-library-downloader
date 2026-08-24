@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
-import DownloadsSidebar from '../components/DownloadsSidebar'
-import DownloadsToggleButton, { type ToggleButtonState } from '../components/DownloadsToggleButton'
+import DownloadsPanel from '../components/DownloadsPanel'
+import type { ToggleButtonState } from '../components/DownloadsToggleShape'
 import { useDownloadStore } from '../stores/downloadStore'
 
 const ACTIVE_STATUSES = new Set(['queued', 'searching', 'downloading', 'tagging'])
 
 function MainLayout(): React.JSX.Element {
-  const [isSidebarOpen, setSidebarOpen] = useState(false)
   const downloads = useDownloadStore((state) => state.downloads)
   const upsert = useDownloadStore((state) => state.upsert)
 
@@ -34,12 +33,7 @@ function MainLayout(): React.JSX.Element {
         <Outlet />
       </main>
 
-      <DownloadsToggleButton
-        state={toggleState}
-        count={toggleCount}
-        onClick={() => setSidebarOpen((open) => !open)}
-      />
-      <DownloadsSidebar isOpen={isSidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <DownloadsPanel state={toggleState} count={toggleCount} />
     </div>
   )
 }

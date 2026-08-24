@@ -34,10 +34,38 @@ body {
 
 /* Morphs the toggle button's shape between idle/active/error — only works
    because all three paths are built with the same point count and command
-   structure (see DownloadsToggleButton.tsx). Transitioning the `d` CSS
+   structure (see DownloadsToggleShape.tsx). Transitioning the `d` CSS
    property (not the SVG attribute) is what Chromium actually animates. */
 .toggle-shape {
   transition:
     d 500ms ease-in-out,
     fill 500ms ease-in-out;
+}
+
+/* DownloadsPanel morphs between the floating toggle button and the full
+   sidebar in three sequential phases, never overlapping — a resize
+   happening at the same time as a content fade is what used to read as
+   "just a cross-fade" rather than the button itself extending:
+     1. 0-100ms:   the button's own shape and this box's background
+                   cross-fade together (both white, see
+                   DownloadsPanel.tsx) — nothing visibly changes yet.
+     2. 100-500ms: width/height alone transition — the only phase where
+                   anything actually moves.
+     3. 500-600ms: the sidebar content fades in (reverse order on close).
+   Position and corner radius stay constant throughout, so only size and
+   fill ever change. background-color's delay has to flip between phase 1
+   (opening) and phase 3 (closing), which a plain `transition` can't
+   express conditionally — hence the `data-open` split below, kept in sync
+   with the two content layers' opacity delays in DownloadsPanel.tsx. */
+.downloads-panel {
+  transition:
+    width 400ms ease-in-out 100ms,
+    height 400ms ease-in-out 100ms,
+    background-color 100ms ease-in-out;
+}
+.downloads-panel[data-open='true'] {
+  transition-delay: 100ms, 100ms, 0ms;
+}
+.downloads-panel[data-open='false'] {
+  transition-delay: 100ms, 100ms, 500ms;
 }

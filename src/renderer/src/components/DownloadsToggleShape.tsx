@@ -1,13 +1,6 @@
 import { useEffect, useRef } from 'react'
-import DownloadIcon from './DownloadIcon'
 
 export type ToggleButtonState = 'idle' | 'active' | 'error'
-
-interface DownloadsToggleButtonProps {
-  state: ToggleButtonState
-  count: number
-  onClick: () => void
-}
 
 const VIEWBOX_SIZE = 100
 const CENTER = VIEWBOX_SIZE / 2
@@ -20,7 +13,14 @@ const TAU = Math.PI * 2
 // interpolate between paths built the same way.
 const MORPH_POINTS = 48
 
-const CIRCLE_RADIUS = 46
+// Touches the viewBox edge exactly (50 = half of the 100-unit viewBox) so
+// it lines up pixel-for-pixel with DownloadsPanel's own rounded corner
+// (28px on the 56px closed box — the same ratio) during the handoff at the
+// start of the open/close morph. A smaller radius here left a visible gap
+// between the drawn circle and the panel's own edge, which popped larger
+// the instant the panel's background faded in behind it — read as a small
+// jump rather than a seamless handoff.
+const CIRCLE_RADIUS = 50
 
 // "Cookie" shape used by Material Design 3's wavy loading indicator — a
 // circle whose radius is modulated around its circumference into a handful
@@ -100,9 +100,9 @@ interface QuadSegment {
 
 type TriangleSegment = LineSegment | QuadSegment
 
-// Same rounded-triangle construction as before (round every corner by
+// Rounded-triangle construction (round every corner by
 // moving `TRIANGLE_CORNER_RADIUS` back along each edge, then join with a
-// quadratic curve through the original vertex) — just kept as a sequence of
+// quadratic curve through the original vertex) — sequence of
 // line/quad segments instead of a finished path string, so triangleAt()
 // below can sample position + exact tangent anywhere along it.
 function buildTriangleSegments(): TriangleSegment[] {
@@ -209,15 +209,15 @@ const SHAPE_FILL: Record<ToggleButtonState, string> = {
 
 const ROTATION_DEGREES_PER_MS = 360 / 5000 // one turn every 5s
 
-// Floating trigger for the downloads sidebar. Shape communicates status at a
-// glance: a static circle when idle, a slowly rotating wavy blob while
-// anything is active, and a soft rounded triangle if something errored —
-// morphing smoothly between the three instead of swapping instantly.
-function DownloadsToggleButton({
-  state,
-  count,
-  onClick
-}: DownloadsToggleButtonProps): React.JSX.Element {
+interface DownloadsToggleShapeProps {
+  state: ToggleButtonState
+}
+
+// The status shape shown on the collapsed toggle button: a static circle
+// when idle, a slowly rotating wavy blob while anything is active, and a
+// soft rounded triangle on error — morphing smoothly between the three
+// instead of swapping instantly.
+function DownloadsToggleShape({ state }: DownloadsToggleShapeProps): React.JSX.Element {
   const pathRef = useRef<SVGPathElement>(null)
   const angleRef = useRef(0)
 
@@ -250,46 +250,20 @@ function DownloadsToggleButton({
   }, [state])
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Toggle downloads panel"
-      className="fixed top-4 right-4 z-50 flex h-14 w-14 items-center justify-center"
-    >
-      <svg
-        viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`}
-        className="absolute inset-0 h-full w-full drop-shadow-md"
-      >
-        {/* `d` is set through the CSS property (via `style`), not the SVG
-            attribute — only a CSS-property change picks up the `.toggle-shape`
-            transition below. `transform` is deliberately left out of this
-            React-controlled style object: the rotation effect above mutates
-            it directly on the DOM node every frame, which would fight with
-            (and be far too expensive through) React's own re-renders. */}
-        <path
-          ref={pathRef}
-          style={{ d: `path("${SHAPE_PATH[state]}")`, fill: SHAPE_FILL[state] }}
-          className="toggle-shape origin-[50px_50px]"
-        />
-      </svg>
-
-      {/* Centered via the button's own flexbox, not `m-auto` — this
-          project's base.css resets `margin` on every element with an
-          unlayered `*` rule, which silently beats Tailwind's margin
-          utilities regardless of specificity (unlayered CSS always wins
-          over `@layer`-wrapped rules). Flexbox alignment doesn't go through
-          margin at all, so it isn't affected by that. */}
-      <DownloadIcon
-        className={`relative z-10 h-5 w-5 transition-colors duration-500 ${state === 'error' ? 'text-red-700' : 'text-black'}`}
+    <svg viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`} className="absolute inset-0 h-full w-full">
+      {/* `d` is set through the CSS property (via `style`), not the SVG
+          attribute — only a CSS-property change picks up the `.toggle-shape`
+          transition below. `transform` is deliberately left out of this
+          React-controlled style object: the rotation effect above mutates
+          it directly on the DOM node every frame, which would fight with
+          (and be far too expensive through) React's own re-renders. */}
+      <path
+        ref={pathRef}
+        style={{ d: `path("${SHAPE_PATH[state]}")`, fill: SHAPE_FILL[state] }}
+        className="toggle-shape origin-[50px_50px]"
       />
-
-      {count > 0 && (
-        <span className="absolute -top-1 -right-1 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[10px] text-white">
-          {count}
-        </span>
-      )}
-    </button>
+    </svg>
   )
 }
 
-export default DownloadsToggleButton
+export default DownloadsToggleShape
