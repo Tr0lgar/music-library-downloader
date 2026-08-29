@@ -7,15 +7,26 @@ import { useDownloadStore } from '../stores/downloadStore'
 const ACTIVE_STATUSES = new Set(['queued', 'searching', 'downloading', 'tagging'])
 
 function MainLayout(): React.JSX.Element {
-  const downloads = useDownloadStore((state) => state.downloads)
   const upsert = useDownloadStore((state) => state.upsert)
 
   useEffect(() => {
     return window.api.onDownloadProgress(upsert)
   }, [upsert])
 
-  const activeCount = downloads.filter((download) => ACTIVE_STATUSES.has(download.status)).length
-  const errorCount = downloads.filter((download) => download.status === 'error').length
+  // Selected as plain numbers, never the downloads array itself: this
+  // component wraps the whole page via <Outlet />, so re-rendering it on
+  // every progress event (each one replaces the array) meant re-rendering
+  // the entire app tens of times per second during an album download.
+  // A primitive selector only re-renders when the count actually changes.
+  const activeCount = useDownloadStore((state) =>
+    state.downloads.reduce(
+      (total, download) => total + (ACTIVE_STATUSES.has(download.status) ? 1 : 0),
+      0
+    )
+  )
+  const errorCount = useDownloadStore((state) =>
+    state.downloads.reduce((total, download) => total + (download.status === 'error' ? 1 : 0), 0)
+  )
 
   // Error takes priority over active — a track failing is more worth
   // surfacing than others still being in progress.

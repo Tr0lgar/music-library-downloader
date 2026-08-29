@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   DownloadIcon,
   type DownloadIconHandle,
@@ -22,7 +22,17 @@ interface DownloadItemProps {
   onRetry: (id: string) => void
 }
 
-function DownloadItem({ download, onRetry }: DownloadItemProps): React.JSX.Element {
+// Memoized because the list re-renders on every progress event of every
+// track (each event replaces the store's downloads array): without this,
+// one track's 10Hz progress stream re-rendered every other item too — each
+// carrying several motion-animated icons — which is what made the app grind
+// during large album downloads. With it, only the item whose data changed
+// re-renders. Requires `onRetry` to be referentially stable (see the
+// useCallback below).
+const DownloadItem = memo(function DownloadItem({
+  download,
+  onRetry
+}: DownloadItemProps): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
       <p className="truncate text-sm font-bold text-neutral-900 dark:text-neutral-100">
@@ -63,7 +73,7 @@ function DownloadItem({ download, onRetry }: DownloadItemProps): React.JSX.Eleme
       )}
     </div>
   )
-}
+})
 
 // Must match the `delay-500` on the expanded-content layer below: the close
 // icon's own draw-in flourish is timed to start right as that layer becomes
@@ -80,7 +90,6 @@ const CLOSE_ICON_REVEAL_DELAY_MS = 500
 function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Element {
   const [isOpen, setOpen] = useState(false)
   const downloads = useDownloadStore((s) => s.downloads)
-  const requests = useDownloadStore((s) => s.requests)
   const downloadIconRef = useRef<DownloadIconHandle>(null)
   const closeIconRef = useRef<XIconHandle>(null)
 
@@ -96,10 +105,14 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
     return () => clearTimeout(timer)
   }, [isOpen])
 
-  const handleRetry = (id: string): void => {
-    const request = requests[id]
+  // Referentially stable (and reads `requests` at call time via getState
+  // instead of subscribing) so it never breaks DownloadItem's memo — an
+  // inline closure here would hand every item a fresh prop on each render,
+  // making the memo useless.
+  const handleRetry = useCallback((id: string): void => {
+    const request = useDownloadStore.getState().requests[id]
     if (request) void window.api.startDownloads([request])
-  }
+  }, [])
 
   return (
     <>

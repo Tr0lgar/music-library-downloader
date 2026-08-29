@@ -21,6 +21,13 @@ const AUDIO_QUALITY = '192K'
 const MAX_CONCURRENT_SEARCHES = 4
 const MAX_CONCURRENT_STREAM_DOWNLOADS = 5
 
+// yt-dlp reports progress up to ~10x/second per track; with several tracks
+// downloading at once that's dozens of IPC messages (and renderer state
+// updates) per second, which visibly bogged the whole UI down during album
+// downloads. 5 updates/second per track is indistinguishable to the eye on
+// a bar this small.
+const PROGRESS_EMIT_INTERVAL_MS = 200
+
 function getDownloadRoot(): string {
   return join(app.getPath('music'), 'Music Library Downloader')
 }
@@ -67,6 +74,10 @@ class ConcurrencyLimiter {
 
   constructor(private readonly maxConcurrent: number) {}
 
+  hasAvailableSlot(): boolean {
+    return this.active < this.maxConcurrent
+  }
+
   async run<T>(task: () => Promise<T>): Promise<T> {
     if (this.active >= this.maxConcurrent) {
       await new Promise<void>((resolve) => this.queue.push(resolve))
@@ -80,6 +91,12 @@ class ConcurrencyLimiter {
     }
   }
 }
+
+// Cover art is usually cached and tagFile() is just local disk I/O, so this
+// step can finish in well under 1s — too fast to see DownloadStatusSteps'
+// tag icon play its own ~850ms animation before the UI jumps to 'done'.
+// Padding the step out to a fixed minimum gives it room to actually be seen.
+const MIN_TAGGING_DISPLAY_MS = 1200
 
 const searchLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_SEARCHES)
 const downloadLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_STREAM_DOWNLOADS)
@@ -255,10 +272,13 @@ export async function downloadTrack(
     browserLoop: for (const browser of browserCandidates) {
       for (const candidate of match.candidates) {
         try {
-          // Back to 'queued' for however long this attempt waits on a
-          // download slot — a failed candidate/browser combo shouldn't leave
-          // the track showing "downloading" while it's actually idle.
-          emit('queued', 0)
+          // Only announced when there's actually a slot to wait for.
+          // Emitting it unconditionally on every retry reset the UI to
+          // 'queued'/0% even when the next attempt started immediately —
+          // visible as the progress bar jumping backward and its wave
+          // flattening out on every failed candidate, not just genuine
+          // queueing.
+          if (!downloadLimiter.hasAvailableSlot()) emit('queued', 0)
           filePath = await downloadLimiter.run(async () => {
             emit('downloading', 0)
             const download = new Download(candidate.url, { ffmpegPath: ffmpegPath ?? undefined })
@@ -267,8 +287,21 @@ export async function downloadTrack(
               .audioQuality(AUDIO_QUALITY)
               .cookiesFromBrowser(browser)
 
+            let lastProgressEmit = 0
+            let bestPercentage = 0
             download.on('progress', (progress) => {
-              emit('downloading', progress.percentage ?? 0)
+              const now = Date.now()
+              if (now - lastProgressEmit < PROGRESS_EMIT_INTERVAL_MS) return
+              lastProgressEmit = now
+              // yt-dlp computes this tick's percentage from downloaded_bytes
+              // over total_bytes — falling back to total_bytes_estimate when
+              // the exact size isn't known yet. That estimate gets revised
+              // as more of the stream arrives, which retroactively raises or
+              // lowers the percentage for the same downloaded_bytes — seen
+              // as the bar filling up, then jumping backward. Once shown, a
+              // download's progress should only ever move forward.
+              bestPercentage = Math.max(bestPercentage, progress.percentage ?? 0)
+              emit('downloading', bestPercentage)
             })
 
             const result = await download.run()
@@ -291,8 +324,14 @@ export async function downloadTrack(
     // Cover art and tagging are local/cached work with no YouTube traffic,
     // so they run unthrottled once the download slot above has freed up.
     emit('tagging', 100)
+    const taggingStartedAt = Date.now()
     const cover = await fetchCoverArt(request.releaseGroupId)
     tagFile(filePath, request, cover)
+
+    const taggingElapsedMs = Date.now() - taggingStartedAt
+    if (taggingElapsedMs < MIN_TAGGING_DISPLAY_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_TAGGING_DISPLAY_MS - taggingElapsedMs))
+    }
 
     emit('done', 100)
   } catch (error) {
