@@ -2,11 +2,14 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   DownloadIcon,
   type DownloadIconHandle,
+  TrashIcon,
+  type TrashIconHandle,
   XIcon,
   type XIconHandle
 } from '@animateicons/react/lucide'
 import type { DownloadProgress } from '@shared/types'
 import { useDownloadStore } from '../stores/downloadStore'
+import CanceledDownloadToast from './CanceledDownloadToast'
 import DownloadStatusSteps from './DownloadStatusSteps'
 import RetryIcon from './RetryIcon'
 import WaveProgressBar from './WaveProgressBar'
@@ -20,21 +23,120 @@ interface DownloadsPanelProps {
 interface DownloadItemProps {
   download: DownloadProgress
   onRetry: (id: string) => void
+  // Split in two rather than one onCancel: the actual cancellation (killing
+  // the process) must fire on its own reliable timer, not be at the mercy of
+  // the exit animation below — which leans on requestAnimationFrame, and
+  // rAF pauses whenever the window is minimized or unfocused. If the user
+  // cancels and immediately alt-tabs away, the download still needs to stop.
+  onCancelStart: (id: string) => void
+  onExitComplete: (id: string, title: string) => void
 }
+
+// Matches the trash icon's own ~900ms (0.9 * default duration) animation —
+// the exit sequence below only starts once that's had time to play, not the
+// instant it's clicked.
+const TRASH_ANIMATION_MS = 900
+
+// The exit itself is two back-to-back CSS transitions on the item's own
+// box, timed sequentially rather than together: fading and collapsing at
+// once reads as the row just shrinking away, not as leaving the list. Both
+// share this one duration so a single `duration-300` class covers them.
+const EXIT_TRANSITION_MS = 300
+
+type ExitPhase = 'idle' | 'fading' | 'collapsing'
 
 // Memoized because the list re-renders on every progress event of every
 // track (each event replaces the store's downloads array): without this,
 // one track's 10Hz progress stream re-rendered every other item too — each
 // carrying several motion-animated icons — which is what made the app grind
 // during large album downloads. With it, only the item whose data changed
-// re-renders. Requires `onRetry` to be referentially stable (see the
-// useCallback below).
+// re-renders. Requires `onRetry`/`onCancelStart`/`onExitComplete` to be
+// referentially stable (see the useCallback below).
 const DownloadItem = memo(function DownloadItem({
   download,
-  onRetry
+  onRetry,
+  onCancelStart,
+  onExitComplete
 }: DownloadItemProps): React.JSX.Element {
+  const trashRef = useRef<TrashIconHandle>(null)
+  const itemRef = useRef<HTMLDivElement>(null)
+  const [exitPhase, setExitPhase] = useState<ExitPhase>('idle')
+  const [collapsedHeight, setCollapsedHeight] = useState<number | null>(null)
+
+  // A light fade/rise-in on mount — undoing a cancel re-adds the track as a
+  // brand new item, and it read as an abrupt pop-in without this.
+  const [hasEntered, setHasEntered] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setHasEntered(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  const handleCancelClick = (): void => {
+    if (exitPhase !== 'idle') return
+    trashRef.current?.startAnimation()
+
+    setTimeout(() => {
+      // The real cancellation fires here, once — not chained behind any of
+      // the rAF-gated animation steps below, so it isn't affected by
+      // whether those actually get to run.
+      onCancelStart(download.id)
+
+      // Phase 1: fade the row out — it still occupies its normal spot in
+      // the list while this plays.
+      setExitPhase('fading')
+
+      setTimeout(() => {
+        // Phase 2: collapse the now-invisible row's own height (plus its
+        // padding/border) down to 0, which is what makes the item below
+        // slide up — that's ordinary layout reflow, not an animation on the
+        // sibling itself. Height can't transition from `auto`, so the
+        // current rendered height is measured and set explicitly first...
+        const height = itemRef.current?.getBoundingClientRect().height ?? 0
+        setCollapsedHeight(height)
+
+        // ...then, only once the browser has actually painted that explicit
+        // (but numerically unchanged) height, is it flipped to 0 — a single
+        // rAF isn't reliably late enough for the paint to have landed.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setExitPhase('collapsing')
+            setTimeout(
+              () => onExitComplete(download.id, download.title),
+              EXIT_TRANSITION_MS
+            )
+          })
+        })
+      }, EXIT_TRANSITION_MS)
+    }, TRASH_ANIMATION_MS)
+  }
+
+  const isCollapsing = exitPhase === 'collapsing'
+
+  // The exit is a plain fade (no horizontal slide) into the collapse below;
+  // `translate` only ever moves for the entrance's slight rise-in. Tailwind
+  // v4's translate-* utilities animate the standalone CSS `translate`
+  // property, not `transform` — listing `transform` here (an easy mistake,
+  // since that's still the property older Tailwind versions used) silently
+  // transitioned nothing, so the utility's value just snapped instead of
+  // easing.
+  const translateClass = hasEntered ? 'translate-y-0' : '-translate-y-1'
+  const opacityClass = exitPhase !== 'idle' ? 'opacity-0' : hasEntered ? 'opacity-100' : 'opacity-0'
+
   return (
-    <div className="flex flex-col gap-1 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+    <div
+      ref={itemRef}
+      style={
+        collapsedHeight !== null
+          ? {
+              height: isCollapsing ? 0 : collapsedHeight,
+              paddingTop: isCollapsing ? 0 : undefined,
+              paddingBottom: isCollapsing ? 0 : undefined,
+              borderWidth: isCollapsing ? 0 : undefined
+            }
+          : undefined
+      }
+      className={`flex flex-col gap-1 overflow-hidden border-b border-neutral-200 px-4 py-3 transition-[translate,opacity,height,padding,border-width] duration-300 ease-in-out dark:border-neutral-800 ${translateClass} ${opacityClass}`}
+    >
       <p className="truncate text-sm font-bold text-neutral-900 dark:text-neutral-100">
         {download.title}
       </p>
@@ -69,7 +171,20 @@ const DownloadItem = memo(function DownloadItem({
           </button>
         </div>
       ) : (
-        <DownloadStatusSteps status={download.status} />
+        <div className="flex items-center justify-between gap-2">
+          <DownloadStatusSteps status={download.status} />
+          {download.status !== 'done' && (
+            <button
+              type="button"
+              onClick={handleCancelClick}
+              disabled={exitPhase !== 'idle'}
+              aria-label={`Cancel ${download.title}`}
+              className="shrink-0 rounded p-1 text-red-500 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40"
+            >
+              <TrashIcon ref={trashRef} size={14} />
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -92,6 +207,9 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
   const downloads = useDownloadStore((s) => s.downloads)
   const downloadIconRef = useRef<DownloadIconHandle>(null)
   const closeIconRef = useRef<XIconHandle>(null)
+  // Only the most recently canceled track — a second cancel while this is
+  // still showing replaces it rather than queueing a second toast.
+  const [canceledToast, setCanceledToast] = useState<{ id: string; title: string } | null>(null)
 
   // Timed rather than fired straight from the open click: the icon and its
   // library-provided animation don't know about the panel's own resize
@@ -113,6 +231,30 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
     const request = useDownloadStore.getState().requests[id]
     if (request) void window.api.startDownloads([request])
   }, [])
+
+  // Fired the moment the trash icon's own animation finishes — kills the
+  // process and cleans up on the main-process side. Deliberately not tied
+  // to the item's own exit animation (see DownloadItem): that part can
+  // stall if the window is minimized or loses focus, but the cancellation
+  // itself shouldn't wait around for it.
+  const handleCancelStart = useCallback((id: string): void => {
+    void window.api.cancelDownload(id)
+  }, [])
+
+  // Fired once the item has actually finished animating out. The cached
+  // request (untouched by remove()) is what lets the toast's Undo button
+  // re-queue the exact same download rather than needing to rebuild it.
+  const handleExitComplete = useCallback((id: string, title: string): void => {
+    useDownloadStore.getState().remove(id)
+    setCanceledToast({ id, title })
+  }, [])
+
+  const handleUndoCancel = (): void => {
+    if (!canceledToast) return
+    const request = useDownloadStore.getState().requests[canceledToast.id]
+    if (request) void window.api.startDownloads([request])
+    setCanceledToast(null)
+  }
 
   return (
     <>
@@ -226,12 +368,26 @@ function DownloadsPanel({ state, count }: DownloadsPanelProps): React.JSX.Elemen
               <p className="px-4 py-6 text-center text-sm text-neutral-500">No downloads yet.</p>
             ) : (
               downloads.map((download) => (
-                <DownloadItem key={download.id} download={download} onRetry={handleRetry} />
+                <DownloadItem
+                  key={download.id}
+                  download={download}
+                  onRetry={handleRetry}
+                  onCancelStart={handleCancelStart}
+                  onExitComplete={handleExitComplete}
+                />
               ))
             )}
           </div>
         </div>
       </div>
+
+      {canceledToast && (
+        <CanceledDownloadToast
+          title={canceledToast.title}
+          onUndo={handleUndoCancel}
+          onDismiss={() => setCanceledToast(null)}
+        />
+      )}
     </>
   )
 }

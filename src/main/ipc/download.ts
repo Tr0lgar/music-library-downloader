@@ -1,8 +1,8 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '@shared/ipc-channels'
 import type { DownloadRequest } from '@shared/types'
-import { downloadTrack } from '../services/download'
-import { downloadStartSchema } from './schemas'
+import { cancelDownload, downloadTrack } from '../services/download'
+import { downloadStartSchema, mbidSchema } from './schemas'
 
 async function processQueue(requests: DownloadRequest[], mainWindow: BrowserWindow): Promise<void> {
   // Fired off together — downloadTrack itself caps how many actually run at
@@ -29,5 +29,14 @@ export function registerDownloadHandlers(mainWindow: BrowserWindow): void {
     // The handler returns immediately — progress streams back via the
     // download:progress event as each track works through the queue.
     void processQueue(parsed.data, mainWindow)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DOWNLOAD_CANCEL, (_event, id: unknown) => {
+    const parsed = mbidSchema.safeParse(id)
+    if (!parsed.success) {
+      console.error('[download] rejected invalid cancel id:', parsed.error.message)
+      throw new Error('Invalid track id.')
+    }
+    cancelDownload(parsed.data)
   })
 }

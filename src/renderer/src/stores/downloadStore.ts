@@ -10,6 +10,7 @@ interface DownloadStore {
   requests: Record<string, DownloadRequest>
   upsert: (update: DownloadProgress) => void
   registerRequests: (requests: DownloadRequest[]) => void
+  remove: (id: string) => void
 }
 
 export const useDownloadStore = create<DownloadStore>((set) => ({
@@ -32,5 +33,9 @@ export const useDownloadStore = create<DownloadStore>((set) => ({
         ...state.requests,
         ...Object.fromEntries(requests.map((request) => [request.id, request]))
       }
-    }))
+    })),
+  // `requests` is left untouched — a canceled track's request stays cached
+  // so an "Undo" action can re-queue it the same way a retry does.
+  remove: (id) =>
+    set((state) => ({ downloads: state.downloads.filter((download) => download.id !== id) }))
 }))

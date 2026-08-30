@@ -4,5 +4,6 @@ export const IPC_CHANNELS = {
   ARTIST_DETAILS: 'artist:details',
   ALBUM_TRACKS: 'album:tracks',
   DOWNLOAD_START: 'download:start',
+  DOWNLOAD_CANCEL: 'download:cancel',
   DOWNLOAD_PROGRESS: 'download:progress'
 } as const

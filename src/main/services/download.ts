@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 import { Download } from 'ytdlp-nodejs'
@@ -197,6 +197,63 @@ function tagFile(filePath: string, request: DownloadRequest, cover?: ArrayBuffer
   writeFileSync(filePath, Buffer.from(writer.addTag()))
 }
 
+interface CancellationToken {
+  canceled: boolean
+  activeDownload: Download | null
+  destinationDir: string
+  fileBaseName: string
+}
+
+// One entry per track currently inside downloadTrack(), keyed by track id —
+// lets cancelDownload() (called from the UI, completely out-of-band from
+// this function's own control flow) reach in and kill whatever's running.
+const cancellationTokens = new Map<string, CancellationToken>()
+
+// Give the just-killed process a moment to actually release its file
+// handles before deleting what it was writing — doing it immediately after
+// kill() can race the OS into an EBUSY/EPERM, especially on Windows.
+const CANCEL_CLEANUP_DELAY_MS = 500
+
+// yt-dlp's own temp-file naming (`.part` while downloading, intermediate
+// container before ffmpeg extracts audio, ...) isn't worth replicating here
+// — anything in the destination folder sharing the track's file base name
+// belongs to this download and nothing else, so it's safe to sweep by
+// prefix rather than track exact filenames through every stage.
+function cleanupPartialFiles(destinationDir: string, fileBaseName: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(destinationDir)
+  } catch {
+    return
+  }
+
+  for (const entry of entries) {
+    if (!entry.startsWith(fileBaseName)) continue
+    try {
+      unlinkSync(join(destinationDir, entry))
+    } catch (error) {
+      console.warn(`[download] failed to remove partial file "${entry}":`, error)
+    }
+  }
+}
+
+// Called from the UI when the user cancels an in-progress track. Kills
+// whatever yt-dlp process is currently running for it, if any — it might
+// still be searching, with nothing to kill yet — and best-effort deletes
+// anything already written. downloadTrack() notices the cancellation on its
+// own and stops retrying or emitting further progress for this id.
+export function cancelDownload(id: string): void {
+  const token = cancellationTokens.get(id)
+  if (!token) return
+
+  token.canceled = true
+  token.activeDownload?.kill()
+  setTimeout(
+    () => cleanupPartialFiles(token.destinationDir, token.fileBaseName),
+    CANCEL_CLEANUP_DELAY_MS
+  )
+}
+
 // Search -> match -> download -> tag, for a single track.
 export async function downloadTrack(
   request: DownloadRequest,
@@ -223,6 +280,21 @@ export async function downloadTrack(
   // actually attempted rather than just one guess.
   const browserCandidates = getBrowserCandidates()
 
+  // Destination is derived purely from the request, so it's known before
+  // search even starts — registered immediately so a cancellation arriving
+  // at any point, including while still searching, knows what to clean up.
+  const token: CancellationToken = {
+    canceled: false,
+    activeDownload: null,
+    destinationDir: join(
+      getDownloadRoot(),
+      sanitizeFileName(request.albumArtist),
+      sanitizeFileName(request.album)
+    ),
+    fileBaseName: sanitizeFileName(request.title)
+  }
+  cancellationTokens.set(request.id, token)
+
   try {
     // Status flips to 'searching' only once the limiter actually grants a
     // slot — emitting it earlier would show every queued track as
@@ -231,6 +303,7 @@ export async function downloadTrack(
       emit('searching', 0)
       return searchYoutube(request.artist, request.title)
     })
+    if (token.canceled) return
     if (candidates.length === 0) {
       throw new Error('No YouTube result found for this track.')
     }
@@ -243,16 +316,11 @@ export async function downloadTrack(
     // Filed under the album's artist, not this track's own artist-credit —
     // otherwise a collab/feature track would land in its own separate
     // "Artist A, Artist B" folder instead of alongside the rest of the album.
-    const destinationDir = join(
-      getDownloadRoot(),
-      sanitizeFileName(request.albumArtist),
-      sanitizeFileName(request.album)
-    )
+    const { destinationDir, fileBaseName } = token
     mkdirSync(destinationDir, { recursive: true })
 
     // No track number prefix — it's already in the TRCK ID3 tag, and
     // duplicating it in the filename was redundant.
-    const fileBaseName = sanitizeFileName(request.title)
     const outputTemplate = join(destinationDir, `${fileBaseName}.%(ext)s`)
 
     // `match.candidates` is already sorted best-first (and includes the
@@ -280,13 +348,22 @@ export async function downloadTrack(
           // queueing.
           if (!downloadLimiter.hasAvailableSlot()) emit('queued', 0)
           filePath = await downloadLimiter.run(async () => {
-            emit('downloading', 0)
             const download = new Download(candidate.url, { ffmpegPath: ffmpegPath ?? undefined })
               .setOutputTemplate(outputTemplate)
               .extractAudio('mp3')
               .audioQuality(AUDIO_QUALITY)
               .cookiesFromBrowser(browser)
 
+            // Handed to cancelDownload() the instant it exists — a cancel
+            // arriving while this attempt was merely queued for a slot (no
+            // process yet) falls through to the check just below instead.
+            token.activeDownload = download
+            if (token.canceled) {
+              download.kill()
+              throw new Error('Download canceled')
+            }
+
+            emit('downloading', 0)
             let lastProgressEmit = 0
             let bestPercentage = 0
             download.on('progress', (progress) => {
@@ -309,6 +386,7 @@ export async function downloadTrack(
           })
           if (filePath) break browserLoop
         } catch (error) {
+          if (token.canceled) break browserLoop
           lastError = error
           console.warn(`[download] candidate failed (browser=${browser}): ${candidate.url}`, error)
         }
@@ -316,6 +394,8 @@ export async function downloadTrack(
 
       if (!isAuthFailure(lastError)) break
     }
+
+    if (token.canceled) return
 
     if (!filePath) {
       throw lastError ?? new Error('All candidate sources failed.')
@@ -327,6 +407,7 @@ export async function downloadTrack(
     const taggingStartedAt = Date.now()
     const cover = await fetchCoverArt(request.releaseGroupId)
     tagFile(filePath, request, cover)
+    if (token.canceled) return
 
     const taggingElapsedMs = Date.now() - taggingStartedAt
     if (taggingElapsedMs < MIN_TAGGING_DISPLAY_MS) {
@@ -335,7 +416,11 @@ export async function downloadTrack(
 
     emit('done', 100)
   } catch (error) {
-    const friendly = toFriendlyError(error, browserCandidates)
-    emit('error', 0, friendly.message)
+    if (!token.canceled) {
+      const friendly = toFriendlyError(error, browserCandidates)
+      emit('error', 0, friendly.message)
+    }
+  } finally {
+    cancellationTokens.delete(request.id)
   }
 }

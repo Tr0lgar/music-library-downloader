@@ -25,6 +25,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.ALBUM_TRACKS, releaseGroupId),
   startDownloads: (requests: DownloadRequest[]): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_START, requests),
+  cancelDownload: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_CANCEL, id),
   onDownloadProgress: (callback: (progress: DownloadProgress) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: DownloadProgress): void =>
       callback(progress)
