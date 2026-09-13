@@ -12,14 +12,8 @@ body {
   flex-direction: column;
 }
 
-/* WaveProgressBar's two wave layers. Kept in CSS rather than inlined in the
-   component so they can follow the theme — the SVG paths are drawn
-   imperatively and can't carry Tailwind's `dark:` variants themselves.
-
-   The main wave takes the bar's own colour straight from Tailwind's palette,
-   so it stays in lockstep with the fill's `fill-sky-*` classes instead of
-   drifting out of sync with a hand-copied hex. The companion wave is a
-   deeper blue at ~80% saturation: vivid, but clearly the darker of the two. */
+/* WaveProgressBar's two wave layers — kept in CSS since the SVG paths are
+   drawn imperatively and can't carry Tailwind's `dark:` variants. */
 .wave-progress-bar {
   --wave-strong: var(--color-sky-500);
   --wave-soft: hsl(205 78% 42%);
@@ -32,31 +26,21 @@ body {
   }
 }
 
-/* Morphs the toggle button's shape between idle/active/error — only works
-   because all three paths are built with the same point count and command
-   structure (see DownloadsToggleShape.tsx). Transitioning the `d` CSS
-   property (not the SVG attribute) is what Chromium actually animates. */
+/* Morphs the toggle button's shape between idle/active/error — requires all
+   three paths (see DownloadsToggleShape.tsx) to share point count/structure.
+   Transitions the `d` CSS property, not the SVG attribute. */
 .toggle-shape {
   transition:
     d 500ms ease-in-out,
     fill 500ms ease-in-out;
 }
 
-/* DownloadsPanel morphs between the floating toggle button and the full
-   sidebar in three sequential phases, never overlapping — a resize
-   happening at the same time as a content fade is what used to read as
-   "just a cross-fade" rather than the button itself extending:
-     1. 0-100ms:   the button's own shape and this box's background
-                   cross-fade together (both white, see
-                   DownloadsPanel.tsx) — nothing visibly changes yet.
-     2. 100-500ms: width/height alone transition — the only phase where
-                   anything actually moves.
-     3. 500-600ms: the sidebar content fades in (reverse order on close).
-   Position and corner radius stay constant throughout, so only size and
-   fill ever change. background-color's delay has to flip between phase 1
-   (opening) and phase 3 (closing), which a plain `transition` can't
-   express conditionally — hence the `data-open` split below, kept in sync
-   with the two content layers' opacity delays in DownloadsPanel.tsx. */
+/* DownloadsPanel morphs between the toggle button and the sidebar in three
+   sequential phases: background cross-fades (0-100ms), width/height resize
+   (100-500ms), then content fades in (500-600ms, reversed on close). The
+   background-color delay flips between phase 1 (open) and phase 3 (close),
+   hence the `data-open` split — kept in sync with the opacity delays in
+   DownloadsPanel.tsx. */
 .downloads-panel {
   transition:
     width 400ms ease-in-out 100ms,

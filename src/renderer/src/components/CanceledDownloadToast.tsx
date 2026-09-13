@@ -8,9 +8,6 @@ interface CanceledDownloadToastProps {
 
 const AUTO_DISMISS_MS = 6000
 
-// Bottom-of-screen confirmation after canceling a track, with a red Undo
-// button for a misclick — auto-dismisses on its own after a few seconds if
-// left alone, at which point the cancellation is final.
 function CanceledDownloadToast({
   title,
   onUndo,

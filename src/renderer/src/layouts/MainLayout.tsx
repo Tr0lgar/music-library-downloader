@@ -13,11 +13,9 @@ function MainLayout(): React.JSX.Element {
     return window.api.onDownloadProgress(upsert)
   }, [upsert])
 
-  // Selected as plain numbers, never the downloads array itself: this
-  // component wraps the whole page via <Outlet />, so re-rendering it on
-  // every progress event (each one replaces the array) meant re-rendering
-  // the entire app tens of times per second during an album download.
-  // A primitive selector only re-renders when the count actually changes.
+  // Primitive selectors, not the downloads array itself: this wraps the
+  // whole app via <Outlet />, and selecting the array re-rendered
+  // everything on every progress event.
   const activeCount = useDownloadStore((state) =>
     state.downloads.reduce(
       (total, download) => total + (ACTIVE_STATUSES.has(download.status) ? 1 : 0),
@@ -28,8 +26,6 @@ function MainLayout(): React.JSX.Element {
     state.downloads.reduce((total, download) => total + (download.status === 'error' ? 1 : 0), 0)
   )
 
-  // Error takes priority over active — a track failing is more worth
-  // surfacing than others still being in progress.
   const toggleState: ToggleButtonState =
     errorCount > 0 ? 'error' : activeCount > 0 ? 'active' : 'idle'
   const toggleCount = toggleState === 'error' ? errorCount : activeCount

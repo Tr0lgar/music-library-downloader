@@ -17,9 +17,6 @@ interface DownloadStatusStepsProps {
 
 type StepState = 'pending' | 'active' | 'done'
 
-// Mirrors WaveProgressBar's own STATUS_FILL_CLASS pairings, so a step icon
-// and the bar above it always agree on what "in progress" / "done" looks
-// like.
 const STEP_COLOR_CLASS: Record<StepState, string> = {
   pending: 'text-neutral-400 dark:text-neutral-600',
   active: 'text-sky-500 dark:text-sky-400',
@@ -28,18 +25,14 @@ const STEP_COLOR_CLASS: Record<StepState, string> = {
 
 const STEPS: DownloadStatus[] = ['searching', 'downloading', 'tagging']
 
-// Neither SearchIcon nor TagIcon loop on their own — each plays once and
-// stops, so an active step re-triggers it on an interval matching its own
-// animation length. AudioWaveformIcon is the exception: its "sweep" variant
-// already has `repeat: Infinity` built in, so it's started once and left
-// alone until the step is no longer active.
+// SearchIcon/TagIcon don't loop on their own, so the active step re-triggers
+// them on an interval. AudioWaveformIcon's "sweep" variant already repeats
+// infinitely, so it's just started/stopped.
 const SEARCH_LOOP_MS = 1200
 const TAG_LOOP_MS = 850
 
-// Must match the `duration-300`/`delay-300` below: the row of step icons
-// slides out first, and the final checkmark only starts its own animation
-// once that exit has actually finished, not the instant the last step
-// completes.
+// Matches the `duration-300`/`delay-300` below: the checkmark only starts
+// once the step row has finished sliding out.
 const ROW_EXIT_MS = 300
 
 function DownloadStatusSteps({ status }: DownloadStatusStepsProps): React.JSX.Element {

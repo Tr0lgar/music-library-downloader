@@ -13,30 +13,23 @@ import { getBrowserCandidates } from '../utils/defaultBrowser'
 // yt-dlp/ffmpeg --audio-quality: 0 (best) - 10 (worst) VBR, or a bitrate like "192K".
 const AUDIO_QUALITY = '192K'
 
-// Search and stream download are throttled separately rather than under one
-// shared limit: they're different network operations against YouTube, and
-// bundling them meant a slot stayed occupied for a track's entire download +
-// tagging just to keep the search step in check — blocking the next track's
-// search for no reason, since tagging/cover art don't touch YouTube at all.
+// Throttled separately from downloads: search and stream are different
+// YouTube operations, and one shared limit kept a slot occupied through
+// tagging for no reason.
 const MAX_CONCURRENT_SEARCHES = 4
 const MAX_CONCURRENT_STREAM_DOWNLOADS = 5
 
-// yt-dlp reports progress up to ~10x/second per track; with several tracks
-// downloading at once that's dozens of IPC messages (and renderer state
-// updates) per second, which visibly bogged the whole UI down during album
-// downloads. 5 updates/second per track is indistinguishable to the eye on
-// a bar this small.
+// yt-dlp reports progress ~10x/second per track, which bogged down the UI
+// across several concurrent downloads.
 const PROGRESS_EMIT_INTERVAL_MS = 200
 
 function getDownloadRoot(): string {
   return join(app.getPath('music'), 'Music Library Downloader')
 }
 
-// Both patterns boil down to the same fix: yt-dlp couldn't use an
-// authenticated YouTube session. Either the video needs sign-in and no valid
-// cookies were found (first pattern), or it couldn't even read the target
-// browser's cookie database at all — e.g. it's not logged in, has no
-// profile data, or is still running and locking the file (second pattern).
+// Both mean yt-dlp couldn't use an authenticated YouTube session: either the
+// video needs sign-in with no valid cookies found, or it couldn't read the
+// browser's cookie database at all.
 const AUTH_FAILURE_PATTERNS = [
   /sign in to confirm your age/i,
   /could not copy .*cookie.*database/i,
@@ -52,11 +45,8 @@ function isAuthFailure(error: unknown): boolean {
   return AUTH_FAILURE_PATTERNS.some((pattern) => pattern.test(message))
 }
 
-// yt-dlp's own message is accurate but assumes a CLI user (mentions
-// --cookies-from-browser flags); translate it into something actionable in
-// the app's UI instead. By the time this fires we've already tried every
-// browser in `browsers` (see the download loop below), so this genuinely
-// means none of them had a valid session — not just the first guess.
+// yt-dlp's own error assumes a CLI user (--cookies-from-browser flags);
+// translate it into something actionable in the UI instead.
 function toFriendlyError(error: unknown, browsers: string[]): Error {
   if (isAuthFailure(error)) {
     const browserList = browsers.map(capitalize).join(', ')
@@ -92,19 +82,15 @@ class ConcurrencyLimiter {
   }
 }
 
-// Cover art is usually cached and tagFile() is just local disk I/O, so this
-// step can finish in well under 1s — too fast to see DownloadStatusSteps'
-// tag icon play its own ~850ms animation before the UI jumps to 'done'.
-// Padding the step out to a fixed minimum gives it room to actually be seen.
+// Tagging is fast local I/O — often under 1s, too fast to see the tag icon's
+// own ~850ms animation before the UI jumps to 'done'.
 const MIN_TAGGING_DISPLAY_MS = 1200
 
 const searchLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_SEARCHES)
 const downloadLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_STREAM_DOWNLOADS)
 
-// Cover Art Archive — same source as the discography grid. Its image
-// endpoint (unlike the rest of archive.org) has been intermittently
-// returning 500s — observed ~40% failure rate on otherwise identical
-// requests — so a single attempt isn't reliable enough on its own.
+// Cover Art Archive's image endpoint intermittently 500s (~40% observed
+// failure rate), so a single attempt isn't reliable enough.
 const COVER_ART_ATTEMPTS = 3
 const COVER_ART_RETRY_DELAY_MS = 800
 
@@ -119,8 +105,7 @@ async function downloadCoverArt(
   for (let attempt = 1; attempt <= COVER_ART_ATTEMPTS; attempt++) {
     try {
       const response = await fetch(url)
-      // A 404 means this release-group genuinely has no cover art on file —
-      // retrying won't change that, unlike a 5xx or a network hiccup.
+      // A 404 means no cover art on file — retrying won't change that.
       if (response.status === 404) return COVER_NOT_FOUND
       if (response.ok) return await response.arrayBuffer()
       lastError = new Error(`Cover Art Archive responded ${response.status}`)
@@ -136,17 +121,11 @@ async function downloadCoverArt(
   throw lastError ?? new Error('Cover Art Archive request failed')
 }
 
-// Every track on an album shares the same cover, so fetch it once per
-// release-group and let every track in the batch reuse it — this both cuts
-// the request count and, since the cache holds the in-flight promise itself,
-// coalesces concurrent tracks of the same album onto a single request
-// instead of each racing the flaky endpoint independently.
-//
-// A confirmed "no art" (404) result is cached indefinitely — that's stable
-// MusicBrainz data. A transient failure is evicted after it settles instead,
-// so it doesn't permanently deny a cover to an album that just happened to
-// hit a bad request; a later call (a retry, or the next batch) gets a fresh
-// attempt rather than replaying a stale failure.
+// One fetch per release-group, shared by every track in the batch — the
+// cache holds the in-flight promise itself, so concurrent tracks of the same
+// album coalesce onto a single request. A confirmed 404 is cached
+// indefinitely; a transient failure is evicted so a later call gets a fresh
+// attempt.
 const coverCache = new Map<string, Promise<ArrayBuffer | typeof COVER_NOT_FOUND>>()
 
 async function fetchCoverArt(releaseGroupId: string): Promise<ArrayBuffer | undefined> {
@@ -166,9 +145,8 @@ async function fetchCoverArt(releaseGroupId: string): Promise<ArrayBuffer | unde
   }
 }
 
-// Deliberately not using yt-dlp's --embed-metadata/--embed-thumbnail: those
-// pull the video's own title/uploader/thumbnail. We want the MusicBrainz +
-// Cover Art Archive data instead.
+// Not using yt-dlp's --embed-metadata/--embed-thumbnail: those pull the
+// video's own title/uploader/thumbnail instead of the MusicBrainz data.
 function tagFile(filePath: string, request: DownloadRequest, cover?: ArrayBuffer): void {
   const fileBuffer = readFileSync(filePath)
   const arrayBuffer = fileBuffer.buffer.slice(
@@ -185,9 +163,8 @@ function tagFile(filePath: string, request: DownloadRequest, cover?: ArrayBuffer
   if (request.genres?.length) writer.setFrame('TCON', request.genres)
   if (cover) {
     writer.setFrame('APIC', {
-      // ImageType.CoverFront from browser-id3-writer — inlined as a literal
-      // because it's an ambient `const enum`, which isolatedModules forbids
-      // importing as a value.
+      // ImageType.CoverFront — inlined since it's an ambient `const enum`,
+      // which isolatedModules forbids importing as a value.
       type: 3,
       data: cover,
       description: 'Cover'
@@ -205,20 +182,15 @@ interface CancellationToken {
 }
 
 // One entry per track currently inside downloadTrack(), keyed by track id —
-// lets cancelDownload() (called from the UI, completely out-of-band from
-// this function's own control flow) reach in and kill whatever's running.
+// lets cancelDownload() reach in and kill whatever's running.
 const cancellationTokens = new Map<string, CancellationToken>()
 
-// Give the just-killed process a moment to actually release its file
-// handles before deleting what it was writing — doing it immediately after
-// kill() can race the OS into an EBUSY/EPERM, especially on Windows.
+// A just-killed process needs a moment to release its file handles before
+// deleting what it was writing, or deletion can race into an EBUSY/EPERM.
 const CANCEL_CLEANUP_DELAY_MS = 500
 
-// yt-dlp's own temp-file naming (`.part` while downloading, intermediate
-// container before ffmpeg extracts audio, ...) isn't worth replicating here
-// — anything in the destination folder sharing the track's file base name
-// belongs to this download and nothing else, so it's safe to sweep by
-// prefix rather than track exact filenames through every stage.
+// Sweeps anything in the destination folder sharing the track's file base
+// name, rather than tracking yt-dlp/ffmpeg's exact intermediate filenames.
 function cleanupPartialFiles(destinationDir: string, fileBaseName: string): void {
   let entries: string[]
   try {
@@ -237,11 +209,9 @@ function cleanupPartialFiles(destinationDir: string, fileBaseName: string): void
   }
 }
 
-// Called from the UI when the user cancels an in-progress track. Kills
-// whatever yt-dlp process is currently running for it, if any — it might
-// still be searching, with nothing to kill yet — and best-effort deletes
-// anything already written. downloadTrack() notices the cancellation on its
-// own and stops retrying or emitting further progress for this id.
+// Kills whatever yt-dlp process is running for this track, if any, and
+// best-effort deletes anything already written. downloadTrack() notices the
+// cancellation on its own and stops.
 export function cancelDownload(id: string): void {
   const token = cancellationTokens.get(id)
   if (!token) return
@@ -270,19 +240,15 @@ export async function downloadTrack(
       error
     })
 
-  // Emitted immediately, before waiting on a concurrency slot, so every
-  // requested track shows up in the sidebar right away instead of only
-  // once it's actually its turn to run.
+  // Emitted before waiting on a concurrency slot, so the track shows up in
+  // the sidebar right away rather than only once it's its turn to run.
   emit('queued', 0)
 
-  // Ordered browser list, tried in the download loop below — and reused in
-  // the catch block, so the friendly message can name every browser we
-  // actually attempted rather than just one guess.
   const browserCandidates = getBrowserCandidates()
 
-  // Destination is derived purely from the request, so it's known before
-  // search even starts — registered immediately so a cancellation arriving
-  // at any point, including while still searching, knows what to clean up.
+  // Registered immediately (destination is derivable from the request
+  // alone) so a cancellation arriving while still searching knows what to
+  // clean up.
   const token: CancellationToken = {
     canceled: false,
     activeDownload: null,
@@ -296,9 +262,8 @@ export async function downloadTrack(
   cancellationTokens.set(request.id, token)
 
   try {
-    // Status flips to 'searching' only once the limiter actually grants a
-    // slot — emitting it earlier would show every queued track as
-    // "searching" while most of them are really just waiting in line.
+    // Only flips to 'searching' once the limiter grants a slot, or every
+    // queued track would show as "searching" while waiting in line.
     const candidates = await searchLimiter.run(() => {
       emit('searching', 0)
       return searchYoutube(request.artist, request.title)
@@ -313,39 +278,26 @@ export async function downloadTrack(
       candidates
     )
 
-    // Filed under the album's artist, not this track's own artist-credit —
-    // otherwise a collab/feature track would land in its own separate
-    // "Artist A, Artist B" folder instead of alongside the rest of the album.
+    // Filed under the album's artist, not this track's artist-credit — a
+    // collab/feature track otherwise lands in its own separate folder.
     const { destinationDir, fileBaseName } = token
     mkdirSync(destinationDir, { recursive: true })
 
-    // No track number prefix — it's already in the TRCK ID3 tag, and
-    // duplicating it in the filename was redundant.
     const outputTemplate = join(destinationDir, `${fileBaseName}.%(ext)s`)
 
-    // `match.candidates` is already sorted best-first (and includes the
-    // best pick at index 0 either way). A given YouTube video can fail for
-    // reasons unrelated to how good a match it is — geo/age restriction,
-    // a transient 403, etc. — so fall through to the next-best candidate
-    // instead of giving up on the whole track.
-    //
-    // Nested inside that: we don't know which browser (if any) has a
-    // valid YouTube login, so the outer loop tries each supported browser
-    // in turn against every candidate, and only moves on to the next
-    // browser if the failure actually looked auth-related — a network
-    // blip or bad format isn't going to be fixed by switching browsers.
+    // Falls through to the next-best candidate on failure (geo/age
+    // restriction, a transient 403, ...) instead of giving up on the track.
+    // The outer loop only moves to the next browser if the failure looked
+    // auth-related — a network blip isn't fixed by switching browsers.
     let filePath: string | undefined
     let lastError: unknown
 
     browserLoop: for (const browser of browserCandidates) {
       for (const candidate of match.candidates) {
         try {
-          // Only announced when there's actually a slot to wait for.
-          // Emitting it unconditionally on every retry reset the UI to
-          // 'queued'/0% even when the next attempt started immediately —
-          // visible as the progress bar jumping backward and its wave
-          // flattening out on every failed candidate, not just genuine
-          // queueing.
+          // Only announced when there's actually a slot to wait for —
+          // emitting it on every retry made the bar jump backward on every
+          // failed candidate, not just genuine queueing.
           if (!downloadLimiter.hasAvailableSlot()) emit('queued', 0)
           filePath = await downloadLimiter.run(async () => {
             const download = new Download(candidate.url, { ffmpegPath: ffmpegPath ?? undefined })
@@ -354,9 +306,6 @@ export async function downloadTrack(
               .audioQuality(AUDIO_QUALITY)
               .cookiesFromBrowser(browser)
 
-            // Handed to cancelDownload() the instant it exists — a cancel
-            // arriving while this attempt was merely queued for a slot (no
-            // process yet) falls through to the check just below instead.
             token.activeDownload = download
             if (token.canceled) {
               download.kill()
@@ -370,13 +319,9 @@ export async function downloadTrack(
               const now = Date.now()
               if (now - lastProgressEmit < PROGRESS_EMIT_INTERVAL_MS) return
               lastProgressEmit = now
-              // yt-dlp computes this tick's percentage from downloaded_bytes
-              // over total_bytes — falling back to total_bytes_estimate when
-              // the exact size isn't known yet. That estimate gets revised
-              // as more of the stream arrives, which retroactively raises or
-              // lowers the percentage for the same downloaded_bytes — seen
-              // as the bar filling up, then jumping backward. Once shown, a
-              // download's progress should only ever move forward.
+              // yt-dlp falls back to total_bytes_estimate when the exact
+              // size isn't known yet, and revises it mid-stream — clamped
+              // here so progress never visibly jumps backward.
               bestPercentage = Math.max(bestPercentage, progress.percentage ?? 0)
               emit('downloading', bestPercentage)
             })
@@ -401,8 +346,6 @@ export async function downloadTrack(
       throw lastError ?? new Error('All candidate sources failed.')
     }
 
-    // Cover art and tagging are local/cached work with no YouTube traffic,
-    // so they run unthrottled once the download slot above has freed up.
     emit('tagging', 100)
     const taggingStartedAt = Date.now()
     const cover = await fetchCoverArt(request.releaseGroupId)

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { coverArtUrl } from '../utils/coverArt'
 
 interface AlbumCoverProps {
   releaseGroupId: string
@@ -18,7 +19,6 @@ const PLACEHOLDER_COLORS = [
   'bg-pink-200 text-pink-900 dark:bg-pink-900 dark:text-pink-100'
 ]
 
-// Deterministic pick so the same album always gets the same placeholder color.
 function colorForTitle(title: string): string {
   let hash = 0
   for (let i = 0; i < title.length; i++) {
@@ -27,15 +27,6 @@ function colorForTitle(title: string): string {
   return PLACEHOLDER_COLORS[hash]
 }
 
-function coverArtUrl(releaseGroupId: string): string {
-  return `https://coverartarchive.org/release-group/${releaseGroupId}/front-250`
-}
-
-/**
- * Not every release group has cover art on the Cover Art Archive. When the
- * image fails to load, this falls back to a colored tile with the album's
- * first letter instead of leaving an empty gap.
- */
 function AlbumCover({ releaseGroupId, title }: AlbumCoverProps): React.JSX.Element {
   const [hasError, setHasError] = useState(false)
   const initial = title.trim().charAt(0).toUpperCase() || '?'
