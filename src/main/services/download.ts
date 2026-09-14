@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { Download } from 'ytdlp-nodejs'
 import ffmpegPath from 'ffmpeg-static'
 import { ID3Writer } from 'browser-id3-writer'
-import type { DownloadProgress, DownloadRequest } from '@shared/types'
+import type { DownloadProgress, DownloadRequest, DownloadStatus } from '@shared/types'
 import { searchYoutube } from './youtube'
 import { findBestMatch } from './matching'
 import { sanitizeFileName } from '../utils/sanitize'
@@ -13,15 +13,19 @@ import { getBrowserCandidates } from '../utils/defaultBrowser'
 // yt-dlp/ffmpeg --audio-quality: 0 (best) - 10 (worst) VBR, or a bitrate like "192K".
 const AUDIO_QUALITY = '192K'
 
+// Fragmented (DASH) audio streams download noticeably faster with a few
+// fragments in flight at once instead of strictly sequentially.
+const CONCURRENT_FRAGMENTS = 4
+
 // Throttled separately from downloads: search and stream are different
 // YouTube operations, and one shared limit kept a slot occupied through
 // tagging for no reason.
 const MAX_CONCURRENT_SEARCHES = 4
 const MAX_CONCURRENT_STREAM_DOWNLOADS = 5
 
-// yt-dlp reports progress ~10x/second per track, which bogged down the UI
-// across several concurrent downloads.
-const PROGRESS_EMIT_INTERVAL_MS = 200
+// yt-dlp reports progress several times a second; relaying every tick
+// re-rendered the UI far more often than the eye can actually use.
+const PROGRESS_EMIT_INTERVAL_MS = 100
 
 function getDownloadRoot(): string {
   return join(app.getPath('music'), 'Music Library Downloader')
@@ -229,7 +233,7 @@ export async function downloadTrack(
   request: DownloadRequest,
   onProgress: (update: DownloadProgress) => void
 ): Promise<void> {
-  const emit = (status: DownloadProgress['status'], progress: number, error?: string): void =>
+  const emit = (status: DownloadStatus, progress: number, error?: string): void =>
     onProgress({
       id: request.id,
       title: request.title,
@@ -302,9 +306,15 @@ export async function downloadTrack(
           filePath = await downloadLimiter.run(async () => {
             const download = new Download(candidate.url, { ffmpegPath: ffmpegPath ?? undefined })
               .setOutputTemplate(outputTemplate)
+              // Restricts yt-dlp to an audio-only source format — without
+              // this it defaults to best video+audio and throws the video
+              // away during extraction, downloading many times more data
+              // than needed for what's ultimately just an MP3.
+              .format('bestaudio/best')
               .extractAudio('mp3')
               .audioQuality(AUDIO_QUALITY)
               .cookiesFromBrowser(browser)
+              .options({ concurrentFragments: CONCURRENT_FRAGMENTS })
 
             token.activeDownload = download
             if (token.canceled) {
