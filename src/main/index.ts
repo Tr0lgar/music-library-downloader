@@ -32,7 +32,10 @@ function createWindow(): BrowserWindow {
     height: 670,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    // Only matters unpackaged (Windows/macOS use the icon baked into the
+    // built executable otherwise) — without this, `npm run dev` shows
+    // Electron's own generic icon instead of the app's.
+    icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true
