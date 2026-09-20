@@ -3,11 +3,11 @@
 A personal Electron desktop app to search [MusicBrainz](https://musicbrainz.org/) for
 artists, albums and tracks, browse an artist's bio and discography (with cover art
 from the Cover Art Archive), pick tracks from an album, and download them as
-ID3-tagged MP3s — matched against YouTube via `yt-dlp` and tagged with MusicBrainz
+ID3-tagged MP3s - matched against YouTube via `yt-dlp` and tagged with MusicBrainz
 metadata rather than whatever the YouTube upload happens to be called.
 
 This is a learning project (first time building anything in Electron) built
-incrementally — this README will grow alongside it.
+incrementally - this README will grow alongside it.
 
 ## Status
 
@@ -20,11 +20,15 @@ Working end to end: search → artist page → album tracklist → download queu
 - [x] YouTube matching: scores candidates on title/artist/duration similarity,
       penalizes live/remix/cover versions, prefers official channels
 - [x] Download pipeline: yt-dlp → ffmpeg (MP3) → ID3 tagging (title/artist/album/track/year/cover)
-- [x] Concurrent downloads (capped) with per-track progress in a sidebar
+- [x] Concurrent downloads (capped) with per-track progress in a sidebar,
+      cancelable mid-download (kills the process, cleans up partial files, undo toast)
 - [x] Candidate fallback (next-best YouTube match) and multi-browser cookie fallback
       for age-restricted videos, with a retry button on failed downloads
+- [x] First-launch setup: MusicBrainz contact email (required) and download
+      location (optional, defaults to `Music/Music Library Downloader`) -
+      no source editing needed, stored locally
 - [ ] Download history
-- [ ] Settings (audio quality, download location, concurrency limit)
+- [ ] Settings (audio quality, concurrency limit) - not user-configurable yet
 - [ ] Artist images (Wikipedia infobox thumbnail is available, not wired up yet)
 - [ ] Packaging / distributable builds
 
@@ -57,19 +61,17 @@ npm run build:win    # build + electron-builder (Windows)
 ## Before you run this yourself
 
 MusicBrainz requires a descriptive `User-Agent` with real contact info, or
-requests get rate-limited more aggressively. Replace the placeholder in both:
-
-- `src/main/services/musicbrainz.ts`
-- `src/main/services/wikipedia.ts`
-
-```ts
-const USER_AGENT = 'MusicLibraryDownloader/0.0.1 ( contact: replace-me@example.com )'
-```
+requests get rate-limited more aggressively. The app asks for this itself on
+first launch - a blocking setup screen collects an email (and, optionally, a
+custom download folder) before anything else works. It's stored in a local
+JSON file (`settings.json`, in Electron's `userData` dir - see
+`src/main/services/settings.ts`) and only ever sent to MusicBrainz/Wikipedia
+as part of that header; nothing is collected or transmitted anywhere else.
 
 Downloaded YouTube videos that require sign-in (age-restricted content) are
 handled by reading cookies from a browser you're logged into YouTube with, via
 `yt-dlp`'s `--cookies-from-browser`. No credentials are ever stored or
-transmitted by this app — see `src/main/utils/defaultBrowser.ts` and
+transmitted by this app - see `src/main/utils/defaultBrowser.ts` and
 `src/main/services/download.ts` for how the browser is picked.
 
 ## Project structure
@@ -87,6 +89,6 @@ scripts/      # Standalone test scripts for services (run with `node scripts/*.t
 ## Disclaimer
 
 For personal use only. Downloading copyrighted content from YouTube may
-violate its Terms of Service depending on your jurisdiction and use case —
+violate its Terms of Service depending on your jurisdiction and use case -
 this project doesn't host, distribute, or encourage downloading anything you
 don't already have the right to.
