@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '@shared/ipc-channels'
 import type {
   AlbumResult,
   AlbumTrack,
+  AppSettings,
   ArtistDetails,
   ArtistResult,
   DownloadProgress,
@@ -14,6 +15,13 @@ import type {
 
 const api = {
   ping: (): Promise<string> => ipcRenderer.invoke(IPC_CHANNELS.PING),
+  getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
+  setMusicbrainzEmail: (email: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_MUSICBRAINZ_EMAIL, email),
+  chooseDownloadDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_CHOOSE_DOWNLOAD_DIRECTORY),
+  setDownloadDirectory: (path: string | null): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_DOWNLOAD_DIRECTORY, path),
   search: (
     term: string,
     type: SearchType

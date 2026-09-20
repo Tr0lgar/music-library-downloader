@@ -1,11 +1,7 @@
 import type { AlbumResult, AlbumTrack, ArtistResult, SearchType, TrackResult } from '@shared/types'
+import { getUserAgent } from '../utils/userAgent'
 
 const MUSICBRAINZ_BASE_URL = 'https://musicbrainz.org/ws/2'
-
-// MusicBrainz requires a descriptive User-Agent identifying the app and a
-// contact (URL or email), otherwise requests get rate-limited more aggressively.
-// Replace the contact info below with your own before shipping this anywhere.
-const USER_AGENT = 'MusicLibraryDownloader/0.0.1 ( contact: replace-me@example.com )'
 
 /**
  * MusicBrainz allows ~1 request/second without an API key. This queues every
@@ -114,7 +110,7 @@ async function mbRequest<T>(path: string, params: Record<string, string>): Promi
     const searchParams = new URLSearchParams({ fmt: 'json', ...params })
     const url = `${MUSICBRAINZ_BASE_URL}/${path}?${searchParams.toString()}`
     const response = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }
+      headers: { 'User-Agent': getUserAgent(), Accept: 'application/json' }
     })
 
     if (!response.ok) {

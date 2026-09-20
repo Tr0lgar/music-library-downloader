@@ -1,3 +1,11 @@
+export interface AppSettings {
+  musicbrainzEmail: string | null
+  // Always a concrete, resolved absolute path — this app's own default
+  // ("<Music>/Music Library Downloader") when the user hasn't overridden it,
+  // never null, so the renderer always has something to display.
+  downloadDirectory: string
+}
+
 export type SearchType = 'artist' | 'album' | 'track'
 
 export interface ArtistResult {

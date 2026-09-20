@@ -3,6 +3,8 @@ import { z } from 'zod'
 // MusicBrainz identifiers (artist, release-group, recording, ...) are always UUIDs.
 export const mbidSchema = z.uuid()
 
+export const musicbrainzEmailSchema = z.email()
+
 export const searchQuerySchema = z.object({
   term: z.string().trim().min(1).max(200),
   type: z.enum(['artist', 'album', 'track'])

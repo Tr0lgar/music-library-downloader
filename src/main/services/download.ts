@@ -1,12 +1,12 @@
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { app } from 'electron'
 import { Download } from 'ytdlp-nodejs'
 import ffmpegPath from 'ffmpeg-static'
 import { ID3Writer } from 'browser-id3-writer'
 import type { DownloadProgress, DownloadRequest, DownloadStatus } from '@shared/types'
 import { searchYoutube } from './youtube'
 import { findBestMatch } from './matching'
+import { getSettings } from './settings'
 import { sanitizeFileName } from '../utils/sanitize'
 import { getBrowserCandidates } from '../utils/defaultBrowser'
 
@@ -28,7 +28,7 @@ const MAX_CONCURRENT_STREAM_DOWNLOADS = 5
 const PROGRESS_EMIT_INTERVAL_MS = 100
 
 function getDownloadRoot(): string {
-  return join(app.getPath('music'), 'Music Library Downloader')
+  return getSettings().downloadDirectory
 }
 
 // Both mean yt-dlp couldn't use an authenticated YouTube session: either the

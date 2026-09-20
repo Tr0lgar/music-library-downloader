@@ -1,5 +1,6 @@
+import { getUserAgent } from '../utils/userAgent'
+
 const WIKIDATA_API_URL = 'https://www.wikidata.org/w/api.php'
-const WIKIPEDIA_USER_AGENT = 'MusicLibraryDownloader/0.0.1 ( contact: replace-me@example.com )'
 
 interface WikidataEntityResponse {
   entities: {
@@ -18,7 +19,7 @@ interface WikipediaSummaryResponse {
 // Wikidata ID -> English Wikipedia article title -> summary extract.
 async function getWikipediaTitle(wikidataId: string): Promise<string | undefined> {
   const url = `${WIKIDATA_API_URL}?action=wbgetentities&ids=${wikidataId}&props=sitelinks&sitefilter=enwiki&format=json`
-  const response = await fetch(url, { headers: { 'User-Agent': WIKIPEDIA_USER_AGENT } })
+  const response = await fetch(url, { headers: { 'User-Agent': getUserAgent() } })
   if (!response.ok) return undefined
 
   const data = (await response.json()) as WikidataEntityResponse
@@ -39,7 +40,7 @@ export async function getArtistBiography(wikidataId?: string): Promise<string | 
     if (!title) return undefined
 
     const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`
-    const response = await fetch(summaryUrl, { headers: { 'User-Agent': WIKIPEDIA_USER_AGENT } })
+    const response = await fetch(summaryUrl, { headers: { 'User-Agent': getUserAgent() } })
     if (!response.ok) return undefined
 
     const data = (await response.json()) as WikipediaSummaryResponse
