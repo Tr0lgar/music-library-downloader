@@ -45,6 +45,10 @@ ul {
 
 body {
   min-height: 100vh;
+  /* The app is always dark-styled regardless of the OS preference — without
+     this, native controls (the <select> dropdown popup in particular) fall
+     back to a light UA theme, rendering white text on a white background. */
+  color-scheme: dark;
   color: var(--color-text);
   background: var(--color-background);
   line-height: 1.6;
